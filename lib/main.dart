@@ -173,7 +173,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF059669))
       ..setUserAgent(
-        'HomeMe-Flutter/1.0 (Mobile; ${Theme.of(context).platform == TargetPlatform.iOS ? "iOS" : "Android"})')
+        'HomeMe-Flutter/1.0 (Mobile; Android)')
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (url) {
           if (mounted) setState(() { _isLoading = true; _hasError = false; });
