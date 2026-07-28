@@ -112,7 +112,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF059669))
-      ..setUserAgent('HomeMe-Flutter/1.0 Mobile')
+      ..setUserAgent('Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36')
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (_) => setState(() { _loading = true; _error = false; }),
         onProgress:  (p) => setState(() => _progress = p / 100.0),
