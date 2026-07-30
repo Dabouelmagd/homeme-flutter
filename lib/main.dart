@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -102,6 +104,8 @@ class _WebViewScreenState extends State<WebViewScreen> {
   late final WebViewController _controller;
   bool _loading = true;
   bool _error  = false;
+  bool _errorIsConnectivity = true;
+  bool _hasRetried = false;
   double _progress = 0;
 
   static const _url = 'https://homemeapp.net';
@@ -116,12 +120,11 @@ class _WebViewScreenState extends State<WebViewScreen> {
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (_) => setState(() { _loading = true; _error = false; }),
         onProgress:  (p) => setState(() => _progress = p / 100.0),
-        onPageFinished: (_) => setState(() => _loading = false),
-        onWebResourceError: (e) {
-          if (e.isForMainFrame == true) {
-            setState(() { _error = true; _loading = false; });
-          }
+        onPageFinished: (_) {
+          setState(() => _loading = false);
+          _hasRetried = false; // successful load resets the retry counter
         },
+        onWebResourceError: _handleWebResourceError,
         onNavigationRequest: (req) {
           if (req.url.startsWith('https://homemeapp.net') ||
               req.url.startsWith('http://homemeapp.net') ||
@@ -132,6 +135,50 @@ class _WebViewScreenState extends State<WebViewScreen> {
         },
       ))
       ..loadRequest(Uri.parse(_url));
+  }
+
+  Future<void> _handleWebResourceError(WebResourceError e) async {
+    // Log the real error so it shows up in `flutter run` / logcat instead of
+    // guessing. This was the missing diagnostic in the previous build.
+    debugPrint(
+      'WebView error: code=${e.errorCode}, description=${e.description}, '
+      'type=${e.errorType}, isMainFrame=${e.isForMainFrame}',
+    );
+
+    // Errors on iframes/subresources (ads, analytics, fonts) shouldn't take
+    // down the whole screen.
+    if (e.isForMainFrame != true) return;
+
+    final connectivityResult = await Connectivity().checkConnectivity();
+    final hasConnection = connectivityResult != ConnectivityResult.none;
+
+    if (!hasConnection) {
+      if (!mounted) return;
+      setState(() {
+        _error = true;
+        _errorIsConnectivity = true;
+        _loading = false;
+      });
+      return;
+    }
+
+    // Device genuinely has connectivity, so this is a transient WebView load
+    // failure (very common right after cold start before the WebView's
+    // internal network stack settles). Retry once automatically before
+    // bothering the user with an error screen.
+    if (!_hasRetried) {
+      _hasRetried = true;
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (mounted) _controller.reload();
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _error = true;
+      _errorIsConnectivity = false;
+      _loading = false;
+    });
   }
 
   Future<bool> _onPop() async {
@@ -172,16 +219,19 @@ class _WebViewScreenState extends State<WebViewScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Text('📶', style: TextStyle(fontSize: 56)),
+                          Text(_errorIsConnectivity ? '📶' : '⚠️', style: const TextStyle(fontSize: 56)),
                           const SizedBox(height: 16),
-                          const Text('تعذّر الاتصال',
-                            style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                          Text(_errorIsConnectivity ? 'تعذّر الاتصال' : 'تعذّر تحميل الصفحة',
+                            style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 8),
-                          Text('تحقق من اتصالك بالإنترنت',
+                          Text(_errorIsConnectivity
+                              ? 'تحقق من اتصالك بالإنترنت'
+                              : 'حدث خطأ أثناء تحميل الموقع، حاول مرة أخرى',
                             style: TextStyle(color: Colors.white.withOpacity(0.75), fontSize: 14)),
                           const SizedBox(height: 28),
                           ElevatedButton(
                             onPressed: () {
+                              _hasRetried = false;
                               setState(() { _error = false; _loading = true; });
                               _controller.reload();
                             },
