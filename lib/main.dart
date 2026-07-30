@@ -4,14 +4,40 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:app_links/app_links.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
-void main() {
+/// Must be a top-level (or static) function — FCM calls this in a separate
+/// isolate when a data message arrives while the app is fully killed.
+@pragma('vm:entry-point')
+Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  debugPrint('FCM background message: ${message.messageId}, data=${message.data}');
+}
+
+/// Set by the notification tap / deep-link handlers, read once the WebView
+/// screen mounts, so a cold-start tap doesn't get lost before the controller exists.
+String? pendingDeepLinkUrl;
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
+
+  // Firebase.initializeApp() will throw until google-services.json is added
+  // and the plugin applied in android/app/build.gradle (see README). Guard
+  // it so the app still runs as a plain WebView in the meantime.
+  try {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
+  } catch (e) {
+    debugPrint('Firebase not configured yet, skipping FCM init: $e');
+  }
+
   runApp(const HomeMeApp());
 }
 
@@ -109,10 +135,69 @@ class _WebViewScreenState extends State<WebViewScreen> {
   double _progress = 0;
 
   static const _url = 'https://homemeapp.net';
+  final _appLinks = AppLinks();
+  StreamSubscription<Uri>? _linkSub;
+
+  /// Loads a URL/path that came from a deep link or a notification tap.
+  /// Accepts either a full URL or a bare path like "/tickets/123".
+  void _openDeepLink(String target) {
+    final uri = target.startsWith('http')
+        ? Uri.parse(target)
+        : Uri.parse('$_url$target');
+    if (uri.host.isEmpty || uri.host == 'homemeapp.net') {
+      _controller.loadRequest(uri);
+    }
+  }
+
+  Future<void> _setupDeepLinking() async {
+    // Cold start: app opened directly via a link.
+    final initial = await _appLinks.getInitialLink();
+    if (initial != null) _openDeepLink(initial.toString());
+
+    // App already running: link opened while foregrounded/backgrounded.
+    _linkSub = _appLinks.uriLinkStream.listen((uri) {
+      _openDeepLink(uri.toString());
+    });
+  }
+
+  Future<void> _setupPushNotifications() async {
+    try {
+      final messaging = FirebaseMessaging.instance;
+      await messaging.requestPermission(alert: true, badge: true, sound: true);
+
+      final token = await messaging.getToken();
+      debugPrint('FCM token: $token');
+      // TODO: send `token` to the HomeMe backend (POST /api/devices/register)
+      // so the server can target this device for pushes.
+
+      // Foreground: show whatever UI you want; here we just navigate if the
+      // payload carries a `url` field pointing at a specific in-app page.
+      FirebaseMessaging.onMessage.listen((message) {
+        debugPrint('FCM foreground message: ${message.data}');
+        final url = message.data['url'];
+        if (url != null) _openDeepLink(url);
+      });
+
+      // Background → tapped: app resumes and should jump straight to the page.
+      FirebaseMessaging.onMessageOpenedApp.listen((message) {
+        final url = message.data['url'];
+        if (url != null) _openDeepLink(url);
+      });
+
+      // Killed → tapped: cold start from a notification tap.
+      final initialMessage = await messaging.getInitialMessage();
+      final url = initialMessage?.data['url'];
+      if (url != null) pendingDeepLinkUrl = url;
+    } catch (e) {
+      debugPrint('FCM not available yet (Firebase not configured): $e');
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    _setupDeepLinking();
+    _setupPushNotifications();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF059669))
@@ -134,7 +219,14 @@ class _WebViewScreenState extends State<WebViewScreen> {
           return NavigationDecision.navigate;
         },
       ))
-      ..loadRequest(Uri.parse(_url));
+      ..loadRequest(Uri.parse(pendingDeepLinkUrl ?? _url));
+    pendingDeepLinkUrl = null;
+  }
+
+  @override
+  void dispose() {
+    _linkSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _handleWebResourceError(WebResourceError e) async {

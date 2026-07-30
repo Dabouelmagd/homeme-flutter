@@ -25,7 +25,34 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+
+            <!-- Android App Links: taps on https://homemeapp.net/... links open
+                 straight into the app instead of a browser. Requires
+                 /.well-known/assetlinks.json to be served from homemeapp.net,
+                 signed with the same key this APK/AAB is built with. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="homemeapp.net"/>
+            </intent-filter>
+
+            <!-- Custom-scheme fallback, useful for links inside emails/SMS
+                 that don't need domain verification, e.g. homeme://ticket/123 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="homeme"/>
+            </intent-filter>
         </activity>
+
+        <!-- FCM: default channel used when a notification arrives while the
+             app is in the foreground/background with no custom channel set. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="homeme_default_channel"/>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>

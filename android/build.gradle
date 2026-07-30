@@ -7,6 +7,9 @@ buildscript {
     dependencies {
         classpath 'com.android.tools.build:gradle:8.1.0'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        // FCM: plugin is only *applied* in app/build.gradle once
+        // google-services.json exists there — see README section on Firebase setup.
+        classpath 'com.google.gms:google-services:4.4.2'
     }
 }
 
