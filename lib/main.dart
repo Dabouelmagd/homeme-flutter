@@ -20,6 +20,14 @@ Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
 /// screen mounts, so a cold-start tap doesn't get lost before the controller exists.
 String? pendingDeepLinkUrl;
 
+/// True only if Firebase.initializeApp() actually succeeded in main().
+/// FirebaseMessaging must never be touched when this is false — Firebase
+/// isn't configured natively yet (no google-services.json / plugin), and
+/// calling FirebaseMessaging APIs against an uninitialized FirebaseApp can
+/// fail on the native Android side in a way Dart's try/catch can't catch,
+/// which is what was causing the white screen after splash.
+bool firebaseReady = false;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setPreferredOrientations([
@@ -29,11 +37,12 @@ void main() async {
   ]);
 
   // Firebase.initializeApp() will throw until google-services.json is added
-  // and the plugin applied in android/app/build.gradle (see README). Guard
-  // it so the app still runs as a plain WebView in the meantime.
+  // and the plugin applied in android/app/build.gradle (see SETUP_REMAINING.md).
+  // Guard it so the app still runs as a plain WebView in the meantime.
   try {
     await Firebase.initializeApp();
     FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
+    firebaseReady = true;
   } catch (e) {
     debugPrint('Firebase not configured yet, skipping FCM init: $e');
   }
@@ -150,17 +159,25 @@ class _WebViewScreenState extends State<WebViewScreen> {
   }
 
   Future<void> _setupDeepLinking() async {
-    // Cold start: app opened directly via a link.
-    final initial = await _appLinks.getInitialLink();
-    if (initial != null) _openDeepLink(initial.toString());
+    try {
+      // Cold start: app opened directly via a link.
+      final initial = await _appLinks.getInitialLink();
+      if (initial != null) _openDeepLink(initial.toString());
 
-    // App already running: link opened while foregrounded/backgrounded.
-    _linkSub = _appLinks.uriLinkStream.listen((uri) {
-      _openDeepLink(uri.toString());
-    });
+      // App already running: link opened while foregrounded/backgrounded.
+      _linkSub = _appLinks.uriLinkStream.listen((uri) {
+        _openDeepLink(uri.toString());
+      });
+    } catch (e) {
+      debugPrint('Deep link setup failed (non-fatal): $e');
+    }
   }
 
   Future<void> _setupPushNotifications() async {
+    if (!firebaseReady) {
+      debugPrint('Skipping FCM setup — Firebase not configured yet (see SETUP_REMAINING.md)');
+      return;
+    }
     try {
       final messaging = FirebaseMessaging.instance;
       await messaging.requestPermission(alert: true, badge: true, sound: true);
